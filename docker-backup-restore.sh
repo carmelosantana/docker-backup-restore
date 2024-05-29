@@ -1,5 +1,5 @@
 #!/bin/bash
-# version 0.1.0
+# version 0.1.1
 
 # Script will commit and save images to tar
 # Run this script on the host machine, not inside a container, check if we're inside a docker container
@@ -35,13 +35,14 @@
 # Usage: ./docker-backup-restore.sh [options]
 # Options:
 # -b    Run backup. (default: true)
-# -d    Backup directory. (default: ./backups)
+# -d    Backup directory. (default: ~/docker-backups)
 # -D    Dry run. (default: false)
 # -m    Interactive menu. (default: true)
+# -k    Keep backups. (default: 3 days)
 # -r    Restore images. (default: false)
 # -p    Purge backups. (default: false)
 # -dd   Delete dangling images. (default: false)
-# -u    User to update permissions. (default: $SUDO_USER)
+# -u    User to update permissions.
 # -v    Verbose output. (default: false)
 # -h    Display help menu
 
@@ -50,12 +51,11 @@ backup=true
 menu=true
 backup_directory=./backups
 dry_run=false
+keep_backups=3
 restore=false
-purge=false
+purge=true
 delete_dangling=false
 verbose=false
-remove_old=true
-expire_days=7
 
 # Parse arguments
 while getopts "b:d:Dm:rpu:vh" opt; do
@@ -68,6 +68,9 @@ while getopts "b:d:Dm:rpu:vh" opt; do
         ;;
     D)
         dry_run=true
+        ;;
+    k)
+        keep_backups=$OPTARG
         ;;
     m)
         menu=$OPTARG
@@ -93,11 +96,12 @@ while getopts "b:d:Dm:rpu:vh" opt; do
         echo "-b    Run backup. (default: true)"
         echo "-d    Backup directory. (default: ./backups)"
         echo "-D    Dry run. (default: false)"
+        echo "-k    Keep backups. (default: 3 days)"
         echo "-m    Interactive menu. (default: true)"
         echo "-r    Restore images. (default: false)"
         echo "-p    Purge backups. (default: false)"
         echo "-dd   Delete dangling images. (default: false)"
-        echo "-u    User to update permissions. (default: $SUDO_USER)"
+        echo "-u    User to update permissions."
         echo "-v    Verbose output. (default: false)"
         echo "-h    Display help menu"
         exit 0
@@ -261,12 +265,13 @@ remove_empty_directories() {
 
 # Function to remove old backups
 remove_old_backups() {
-    if [ "$remove_old" = true ]; then
-        # if Dry run
+    if [ "$purge" = true ]; then
+        # Folder structor is hostname/+%Y-%m-%d/
+        # Remove folders older than $keep_backups days
         if [ "$dry_run" = false ]; then
-            find $backup_directory -type f -name "*.tar" -mtime +$expire_days -delete
+            find $backup_directory -type d -ctime +$keep_backups -exec rm -rf {} \;
         else
-            echo "find $backup_directory -type f -name "*.tar" -mtime +$expire_days -delete"
+            find $backup_directory -type d -ctime +$keep_backups
         fi
     fi
     remove_empty_directories
@@ -301,6 +306,14 @@ restore() {
     docker load -i $tar_file
 }
 
+# update permissions
+update_permissions() {
+    if [ -n "$user" ]; then
+        chown -Rv $user:$user $backup_directory
+        chmod -Rv 755 $backup_directory
+    fi
+}
+
 # Main function
 main() {
     # Setup
@@ -331,6 +344,9 @@ main() {
     if [ "$verbose" = true ]; then
         echo "Backup directory: $backup_directory"
     fi
+
+    # Update permissions
+    update_permissions
 
     # End of script
     exit 0

@@ -1,5 +1,5 @@
 #!/bin/bash
-# version 0.1.1
+# version 0.1.2
 
 # Script will commit and save images to tar
 # Run this script on the host machine, not inside a container, check if we're inside a docker container
@@ -49,7 +49,7 @@
 # Set default values
 backup=true
 menu=true
-backup_directory=./backups
+backup_directory=~/docker-backups
 dry_run=false
 keep_backups=3
 restore=false
@@ -123,10 +123,10 @@ done
 # Check if backup directory (with hostname and date) exixts, if not create it
 # if any DIR does not exist, we error out
 init() {
-    # check for trailing slash, if present remove it
-    if [[ "$backup_directory" == */ ]]; then
-        backup_directory="${backup_directory%?}"
-    fi
+    # # check for trailing slash, if present remove it
+    # if [[ "$backup_directory" == */ ]]; then
+    #     backup_directory="${backup_directory%?}"
+    # fi
     # Add hostname to backup directory
     backup_directory=$backup_directory/$(hostname)
 
@@ -168,6 +168,7 @@ menu() {
     echo "5) Exit"
     read -p "Enter option: " option
 
+    # selecting 3 and 4 doesnt work
     case $option in
     1)
         select_containers
@@ -178,13 +179,16 @@ menu() {
     2)
         restore
         ;;
-    3)
-        remove_old_backups
+    3) 
+        restore_all
         ;;
     4)
-        delete_dangling_images
+        remove_old_backups
         ;;
     5)
+        delete_dangling_images
+        ;;
+    6)
         exit 0
         ;;
     *)
@@ -206,6 +210,8 @@ select_containers() {
 }
 
 backup_commit_image() {
+    check_free_space
+
     # Check if container_select is set, if yes commit only selected containers, if no commit all containers
     if [ -z "$container_select" ]; then
         containers=$(docker ps -a -q)
@@ -245,6 +251,26 @@ backup_commit_image() {
         fi
     done
 
+    # Update permissions
+    update_permissions
+}
+
+# Check free space, only backup if we have atleast 10% free space
+check_free_space() {
+    # Get free space in bytes
+    free_space=$(df --output=avail / | tail -n 1)
+
+    # Get total space in bytes
+    total_space=$(df --output=size / | tail -n 1)
+
+    # Calculate percentage
+    percentage=$(echo "scale=2; $free_space / $total_space * 100" | bc)
+
+    # Check if we have atleast 10% free space
+    if [ $(echo "$percentage < 10" | bc) -eq 1 ]; then
+        echo "Not enough free space to backup, please check and run the script again."
+        exit 1
+    fi
 }
 
 # Function to delete dangling images
@@ -306,6 +332,21 @@ restore() {
     docker load -i $tar_file
 }
 
+# restore all images in backup directory
+restore_all() {
+    # Get list of tar files
+    tar_files=$(find $backup_directory -type f -name "*.tar")
+
+    # Restore each tar file in backup directory
+    for tar_file in $tar_files; do
+        # Check if tar file exists
+        if [ -f "$tar_file" ]; then
+            echo "Restoring: $(basename $tar_file)"
+            docker load -i $tar_file
+        fi
+    done
+}
+
 # update permissions
 update_permissions() {
     if [ -n "$user" ]; then
@@ -322,31 +363,25 @@ main() {
     # Interactive menu
     if [ "$menu" = true ]; then
         menu
-    fi
+    else
+        if [ "$purge" = true ]; then
+            remove_old_backups
+        fi
 
-    # Are we backing up, or restoring
-    if [ "$backup" = true ]; then
-        backup_commit_image
-    fi
+        if [ "$delete_dangling" = true ]; then
+            delete_dangling_images
+        fi
 
-    if [ "$restore" = true ]; then
-        restore
-    fi
+        if [ "$backup" = true ]; then
+            backup_commit_image
+        elif [ "$restore" = true ]; then
+            restore
+        fi
 
-    if [ "$purge" = true ]; then
-        remove_old_backups
+        if [ "$verbose" = true ]; then
+            echo "Backup directory: $backup_directory"
+        fi
     fi
-
-    if [ "$delete_dangling" = true ]; then
-        delete_dangling_images
-    fi
-
-    if [ "$verbose" = true ]; then
-        echo "Backup directory: $backup_directory"
-    fi
-
-    # Update permissions
-    update_permissions
 
     # End of script
     exit 0
